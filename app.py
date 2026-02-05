@@ -138,4 +138,72 @@ if st.button("🚀 立即生成视频"):
     try:
         # 上传逻辑
         final_first_url = first_frame_data
-        final
+        final_last_url = last_frame_data
+
+        if first_frame_type == "file":
+            status_container.write("📤 正在上传首帧图片...")
+            final_first_url = upload_to_temp_host(first_frame_data)
+            if not final_first_url:
+                status_container.update(label="❌ 图片上传失败", state="error")
+                st.stop()
+
+        if last_frame_type == "file" and last_frame_data:
+            status_container.write("📤 正在上传尾帧图片...")
+            final_last_url = upload_to_temp_host(last_frame_data)
+            if not final_last_url:
+                status_container.update(label="❌ 图片上传失败", state="error")
+                st.stop()
+
+        # API 调用
+        client = Ark(base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=api_key)
+        
+        content_payload = [
+            {"type": "text", "text": prompt_text},
+            {"type": "image_url", "image_url": {"url": final_first_url}, "role": "first_frame"}
+        ]
+        
+        if final_last_url:
+            content_payload.append(
+                {"type": "image_url", "image_url": {"url": final_last_url}, "role": "last_frame"}
+            )
+
+        status_container.write("🤖 AI 正在思考并生成视频 (预计 1-2 分钟)...")
+        
+        create_result = client.content_generation.tasks.create(
+            model=model_id,
+            content=content_payload,
+            generate_audio=True,
+            ratio=ratio,
+            duration=duration,
+        )
+        task_id = create_result.id
+        status_container.write(f"🆔 任务 ID: `{task_id}`")
+
+        # 轮询
+        start_time = time.time()
+        while True:
+            if time.time() - start_time > 600:
+                status_container.update(label="❌ 任务超时", state="error")
+                break
+
+            get_result = client.content_generation.tasks.get(task_id=task_id)
+            status = get_result.status
+            
+            if status == "succeeded":
+                video_url = get_result.content.video_url
+                status_container.update(label="✅ 生成成功！", state="complete", expanded=False)
+                
+                st.balloons() # 撒花特效
+                st.markdown("### 🎬 你的视频准备好了：")
+                st.video(video_url)
+                break
+            elif status == "failed":
+                status_container.update(label="❌ 生成失败", state="error")
+                st.error(f"错误详情: {get_result.error}")
+                break
+            else:
+                time.sleep(3)
+
+    except Exception as e:
+        status_container.update(label="❌ 系统错误", state="error")
+        st.error(f"发生异常: {str(e)}")
