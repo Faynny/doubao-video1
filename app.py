@@ -6,7 +6,7 @@ from volcenginesdkarkruntime import Ark
 
 # --- 1. UI 配置 ---
 st.set_page_config(
-    page_title="豆包视频生成 Pro",
+    page_title="Seedance 1.5Pro",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -179,3 +179,4 @@ if st.button("🚀 立即生成视频"):
     except Exception as e:
         status_container.update(label="❌ 异常", state="error")
         st.error(f"Exception: {str(e)}")
+
