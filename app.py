@@ -146,4 +146,50 @@ if st.button("🚀 立即生成视频"):
 
         client = Ark(base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=api_key)
         content_payload = [{"type": "text", "text": prompt_text}, {"type": "image_url", "image_url": {"url": final_first_url}, "role": "first_frame"}]
-        if final_last_url: content_payload
+        if final_last_url: content_payload.append({"type": "image_url", "image_url": {"url": final_last_url}, "role": "last_frame"})
+
+        status_container.write(f"🤖 正在生成 ({resolution})...")
+        create_result = client.content_generation.tasks.create(
+            model=model_id, content=content_payload, generate_audio=True,
+            ratio=ratio, resolution=resolution, duration=duration
+        )
+        task_id = create_result.id
+        
+        start_time = time.time()
+        while True:
+            if time.time() - start_time > 600: break
+            get_result = client.content_generation.tasks.get(task_id=task_id)
+            if get_result.status == "succeeded":
+                video_url = get_result.content.video_url
+                status_container.update(label="✅ 成功！", state="complete", expanded=False)
+                
+                # 保存到历史
+                st.session_state.history.append({
+                    "task_id": task_id,
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "prompt": prompt_text,
+                    "video_url": video_url,
+                    "model": model_id
+                })
+                st.video(video_url)
+                break
+            elif get_result.status == "failed":
+                status_container.update(label="❌ 失败", state="error"); break
+            else: time.sleep(3)
+    except Exception as e: st.error(str(e))
+
+# --- 历史记录展示区 ---
+if len(st.session_state.history) > 0:
+    st.divider()
+    st.subheader("📜 视频列表 (本地+云端)")
+    
+    # 倒序显示
+    for item in reversed(st.session_state.history):
+        with st.expander(f"🕒 {item['time']} - {item.get('task_id', 'Unknown')}", expanded=True):
+            cols = st.columns([1, 1.5])
+            with cols[0]:
+                st.video(item['video_url'])
+            with cols[1]:
+                st.info(f"**提示词:** {item['prompt']}")
+                st.text(f"ID: {item.get('task_id')}")
+                st.markdown(f"[📥 下载链接]({item['video_url']})")
