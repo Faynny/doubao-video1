@@ -2,7 +2,6 @@ import streamlit as st
 import os
 import time
 import requests
-import json
 from datetime import datetime
 from volcenginesdkarkruntime import Ark
 
@@ -64,31 +63,18 @@ def upload_to_temp_host(uploaded_file):
         return None
     except: return None
 
-# --- 核心修复：暴力提取提示词函数 ---
 def extract_prompt_from_item(item):
-    """
-    尝试从 API 返回的复杂对象中提取提示词文本。
-    策略：检查 content 列表 -> 检查 input 字段 -> 检查 request 字段
-    """
     try:
-        # 1. 尝试直接从 content 列表里找 type='text'
         if hasattr(item, 'content') and isinstance(item.content, list):
             for c in item.content:
-                # 兼容对象属性访问 (.text) 和字典访问 (['text'])
                 if hasattr(c, 'type') and c.type == 'text':
                     return getattr(c, 'text', '')
                 if isinstance(c, dict) and c.get('type') == 'text':
                     return c.get('text', '')
-
-        # 2. 有些版本的 SDK 将输入放在 request 或 inputs 字段
-        # 这里做一个简单的容错，如果 content 里只有视频，尝试找找别的属性（如果有的话）
-        # 目前豆包 API 通常在 content 里回显，但也可能只回显视频。
-        
-        # 如果实在找不到，返回特定标记
         return "☁️ 云端同步 (未识别到文本)"
-    except Exception:
-        return "☁️ 解析错误"
+    except: return "☁️ 解析错误"
 
+# --- 核心升级：增加缩略图预览 ---
 def handle_image_input(label, key_prefix):
     st.markdown(f"**{label}**")
     gallery_key = f"gallery_{key_prefix}"
@@ -104,19 +90,34 @@ def handle_image_input(label, key_prefix):
                         st.session_state[gallery_key].append(f)
         
         if st.session_state[gallery_key]:
+            # === 新增功能：缩略图预览区 ===
+            with st.expander(f"👁️ 展开预览 ({len(st.session_state[gallery_key])}张)", expanded=False):
+                # 创建 5 列网格显示缩略图
+                cols = st.columns(5)
+                for i, img_file in enumerate(st.session_state[gallery_key]):
+                    with cols[i % 5]: # 自动换行
+                        st.image(img_file, caption=f"序号 {i+1}", use_container_width=True)
+            # ============================
+
             options = [f"{i+1}. {f.name}" for i, f in enumerate(st.session_state[gallery_key])]
-            sel = st.radio("选择:", options, horizontal=True, key=f"r_{key_prefix}")
-            if st.button("清空", key=f"c_{key_prefix}"):
+            sel = st.radio("请选择一张作为输入:", options, horizontal=True, key=f"r_{key_prefix}")
+            
+            if st.button("清空相册", key=f"c_{key_prefix}"):
                 st.session_state[gallery_key] = []
                 st.rerun()
-            if sel: return st.session_state[gallery_key][options.index(sel)], "file"
+                
+            if sel: 
+                selected_file = st.session_state[gallery_key][options.index(sel)]
+                # 选中后显示一张中等大小的图确认
+                st.image(selected_file, caption="✅ 已选中这张", width=250)
+                return selected_file, "file"
     with tab2:
         url = st.text_input("URL", key=f"url_{key_prefix}")
         if url: return url, "url"
     return None, None
 
 # ==========================================
-# 3. 侧边栏 (含同步逻辑)
+# 3. 侧边栏
 # ==========================================
 with st.sidebar:
     st.header("⚙️ 配置")
@@ -128,46 +129,33 @@ with st.sidebar:
     duration = st.slider("时长", 2, 10, 5)
     
     st.divider()
-    st.markdown("### ☁️ 云端同步")
-    
-    if st.button("🔄 同步最近 20 条 (按时间排序)"):
+    if st.button("🔄 同步最近 20 条"):
         if not api_key:
             st.error("缺 API Key")
         else:
             try:
                 client = Ark(base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=api_key)
-                with st.spinner("正在拉取数据..."):
-                    # 1. 获取列表
+                with st.spinner("同步中..."):
                     resp = client.content_generation.tasks.list(page_size=20, status="succeeded")
                     count = 0
                     if hasattr(resp, 'items'):
                         for item in resp.items:
-                            # 去重
                             if not any(h.get('task_id') == item.id for h in st.session_state.history):
-                                # 2. 提取数据
                                 prompt_str = extract_prompt_from_item(item)
-                                # 获取原始时间戳用于排序
                                 created_ts = getattr(item, 'created_at', 0)
-                                
                                 st.session_state.history.append({
                                     "task_id": item.id,
-                                    "created_at": created_ts, # 存原始时间戳
+                                    "created_at": created_ts,
                                     "time": datetime.fromtimestamp(created_ts).strftime("%m-%d %H:%M"),
                                     "prompt": prompt_str,
                                     "video_url": item.content.video_url,
                                     "model": model_id
                                 })
                                 count += 1
-                        
-                        # 3. 核心修改：强制按时间倒序排序 (最新的在最前)
-                        # key使用 created_at 字段，reverse=True 表示大数(新时间)在前
                         st.session_state.history.sort(key=lambda x: x['created_at'], reverse=True)
-                        
-                        st.success(f"同步了 {count} 条新记录！")
-                    else:
-                        st.warning("云端无数据")
-            except Exception as e:
-                st.error(f"同步出错: {str(e)}")
+                        st.success(f"同步了 {count} 条")
+                    else: st.warning("无数据")
+            except Exception as e: st.error(str(e))
 
 # ==========================================
 # 4. 主界面
@@ -199,48 +187,59 @@ if st.button("🚀 生成视频"):
         payload = [{"type": "text", "text": prompt_text}, {"type": "image_url", "image_url": {"url": f_url}, "role": "first_frame"}]
         if l_url: payload.append({"type": "image_url", "image_url": {"url": l_url}, "role": "last_frame"})
 
-        status.write("🤖 生成中...")
+        status.write("🤖 提交任务...")
         res = client.content_generation.tasks.create(
             model=model_id, content=payload, generate_audio=True,
             ratio=ratio, resolution=resolution, duration=duration
         )
         task_id = res.id
         
+        # === 核心升级：倒计时逻辑 ===
         start = time.time()
+        status.write(f"🆔 任务ID: {task_id}")
+        
         while True:
-            if time.time() - start > 600: status.update(label="超时", state="error"); break
+            # 1. 计算耗时
+            elapsed = int(time.time() - start)
+            
+            # 2. 动态更新状态标题 (这会让用户看到时间在跳动)
+            status.update(label=f"🚀 任务运行中... (已耗时 {elapsed}s)", state="running")
+            
+            if elapsed > 600: status.update(label="超时", state="error"); break
+            
             get_res = client.content_generation.tasks.get(task_id=task_id)
             if get_res.status == "succeeded":
                 v_url = get_res.content.video_url
-                status.update(label="✅ 成功", state="complete", expanded=False)
+                status.update(label=f"✅ 成功！(总耗时 {elapsed}s)", state="complete", expanded=False)
                 
-                # 新生成的直接插到最前面
                 new_record = {
                     "task_id": task_id,
-                    "created_at": time.time(), # 当前时间
+                    "created_at": time.time(),
                     "time": datetime.now().strftime("%m-%d %H:%M"),
                     "prompt": prompt_text,
                     "video_url": v_url,
                     "model": model_id
                 }
-                st.session_state.history.insert(0, new_record) # 插入到第一个位置
+                st.session_state.history.insert(0, new_record)
                 
                 st.balloons()
                 st.video(v_url)
                 break
             elif get_res.status == "failed":
                 status.update(label="失败", state="error"); st.error(get_res.error); break
-            time.sleep(3)
+            
+            # 3. 稍微缩短轮询间隔，让时间显示更平滑，但也不要太快
+            time.sleep(2) 
+            # ==========================
+            
     except Exception as e: status.update(label="异常", state="error"); st.error(str(e))
 
 # ==========================================
-# 5. 历史记录 (直接显示，不用倒序循环了，因为列表本身已经排好了)
+# 5. 历史记录
 # ==========================================
 if st.session_state.history:
     st.divider()
     st.subheader(f"📜 历史记录 ({len(st.session_state.history)})")
-    
-    # 因为列表已经 sort 过了，直接遍历即可
     for item in st.session_state.history:
         p_show = item['prompt'][:30] + "..." if len(item['prompt']) > 30 else item['prompt']
         with st.expander(f"🕒 {item['time']} - {p_show}", expanded=True):
