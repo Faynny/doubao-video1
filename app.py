@@ -48,6 +48,11 @@ st.markdown("""
         height: 45px; font-size: 18px; font-weight: bold; width: 100%; border: none;
     }
     div.stButton > button:hover { background-color: #FF2B2B; color: white; }
+    
+    /* 针对取消按钮的特殊样式（让它看起来不同） */
+    div[data-testid="column"] button[kind="secondary"] {
+        background-color: #6c757d;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -74,7 +79,7 @@ def extract_prompt_from_item(item):
         return "☁️ 云端同步 (未识别到文本)"
     except: return "☁️ 解析错误"
 
-# --- 核心升级：增加缩略图预览 ---
+# --- 核心升级：增加“取消选中”按钮 ---
 def handle_image_input(label, key_prefix):
     st.markdown(f"**{label}**")
     gallery_key = f"gallery_{key_prefix}"
@@ -90,25 +95,33 @@ def handle_image_input(label, key_prefix):
                         st.session_state[gallery_key].append(f)
         
         if st.session_state[gallery_key]:
-            # === 新增功能：缩略图预览区 ===
+            # 缩略图预览
             with st.expander(f"👁️ 展开预览 ({len(st.session_state[gallery_key])}张)", expanded=False):
-                # 创建 5 列网格显示缩略图
                 cols = st.columns(5)
                 for i, img_file in enumerate(st.session_state[gallery_key]):
-                    with cols[i % 5]: # 自动换行
+                    with cols[i % 5]:
                         st.image(img_file, caption=f"序号 {i+1}", use_container_width=True)
-            # ============================
 
             options = [f"{i+1}. {f.name}" for i, f in enumerate(st.session_state[gallery_key])]
-            sel = st.radio("请选择一张作为输入:", options, horizontal=True, key=f"r_{key_prefix}")
             
-            if st.button("清空相册", key=f"c_{key_prefix}"):
+            # 单选框
+            sel = st.radio("请选择一张作为输入:", options, horizontal=True, key=f"r_{key_prefix}", index=None)
+            
+            # === 按钮区 ===
+            b_col1, b_col2 = st.columns([1, 1])
+            
+            # 按钮1：清空所有图片
+            if b_col1.button("🗑️ 清空相册", key=f"c_{key_prefix}"):
                 st.session_state[gallery_key] = []
                 st.rerun()
+            
+            # 按钮2：(新功能) 仅取消勾选
+            if b_col2.button("❌ 取消选中", key=f"d_{key_prefix}"):
+                st.session_state[f"r_{key_prefix}"] = None # 强制把单选框的值设为空
+                st.rerun() # 刷新界面
                 
             if sel: 
                 selected_file = st.session_state[gallery_key][options.index(sel)]
-                # 选中后显示一张中等大小的图确认
                 st.image(selected_file, caption="✅ 已选中这张", width=250)
                 return selected_file, "file"
     with tab2:
@@ -194,15 +207,11 @@ if st.button("🚀 生成视频"):
         )
         task_id = res.id
         
-        # === 核心升级：倒计时逻辑 ===
         start = time.time()
         status.write(f"🆔 任务ID: {task_id}")
         
         while True:
-            # 1. 计算耗时
             elapsed = int(time.time() - start)
-            
-            # 2. 动态更新状态标题 (这会让用户看到时间在跳动)
             status.update(label=f"🚀 任务运行中... (已耗时 {elapsed}s)", state="running")
             
             if elapsed > 600: status.update(label="超时", state="error"); break
@@ -221,16 +230,13 @@ if st.button("🚀 生成视频"):
                     "model": model_id
                 }
                 st.session_state.history.insert(0, new_record)
-                
                 st.balloons()
                 st.video(v_url)
                 break
             elif get_res.status == "failed":
                 status.update(label="失败", state="error"); st.error(get_res.error); break
             
-            # 3. 稍微缩短轮询间隔，让时间显示更平滑，但也不要太快
             time.sleep(2) 
-            # ==========================
             
     except Exception as e: status.update(label="异常", state="error"); st.error(str(e))
 
