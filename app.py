@@ -9,7 +9,7 @@ from volcenginesdkarkruntime import Ark
 # 1. 页面基础配置 (必须放在第一行)
 # ==========================================
 st.set_page_config(
-    page_title="豆包视频生成 Pro",
+    page_title="Seedance 1.5Pro",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -18,7 +18,7 @@ st.set_page_config(
 # ==========================================
 # 2. 🔐 访问密码设置
 # ==========================================
-APP_PASSWORD = "123456"  # <--- 在这里修改你的密码
+APP_PASSWORD = "HYMS"  # <--- 在这里修改你的密码
 
 # --- 登录拦截逻辑 ---
 if "authenticated" not in st.session_state:
@@ -278,3 +278,4 @@ if len(st.session_state.history) > 0:
             h1.video(item['video_url'])
             h2.info(f"提示词: {item['prompt']}")
             h2.markdown(f"[📥 下载视频]({item['video_url']})")
+
