@@ -9,7 +9,7 @@ from volcenginesdkarkruntime import Ark
 # 1. 页面基础配置 (必须放在第一行)
 # ==========================================
 st.set_page_config(
-    page_title="Seedance 1.5Pro",
+    page_title="豆包视频生成 Pro",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -18,7 +18,7 @@ st.set_page_config(
 # ==========================================
 # 2. 🔐 访问密码设置
 # ==========================================
-APP_PASSWORD = "HYMS"  # <--- 在这里修改你的密码
+APP_PASSWORD = "HYMS"  # <--- 请在这里修改你的密码
 
 # --- 登录拦截逻辑 ---
 if "authenticated" not in st.session_state:
@@ -74,80 +74,60 @@ def upload_to_temp_host(uploaded_file):
         st.error(f"图床连接失败: {e}")
         return None
 
-# --- 带相册功能的图片输入组件 (支持保留10张) ---
+# --- 带相册功能的图片输入组件 ---
 def handle_image_input(label, key_prefix):
     st.markdown(f"**{label}**")
-    
-    # 初始化相册 Session
     gallery_key = f"gallery_{key_prefix}"
     if gallery_key not in st.session_state:
         st.session_state[gallery_key] = []
 
     tab1, tab2 = st.tabs(["🖼️ 图片库 (多张)", "🔗 粘贴链接"])
 
-    # === Tab 1: 相册模式 ===
     with tab1:
-        # 上传区
         uploaded_files = st.file_uploader(
-            f"上传新图片 (自动存入下方相册)", 
-            type=["jpg", "png", "jpeg"], 
-            accept_multiple_files=True,
-            key=f"uploader_{key_prefix}"
+            f"上传新图片", type=["jpg", "png", "jpeg"], accept_multiple_files=True, key=f"uploader_{key_prefix}"
         )
-        
-        # 将新文件加入相册
         if uploaded_files:
             for new_file in uploaded_files:
                 if len(st.session_state[gallery_key]) < 10:
-                    # 简单去重 (按文件名)
                     current_names = [f.name for f in st.session_state[gallery_key]]
                     if new_file.name not in current_names:
                         st.session_state[gallery_key].append(new_file)
         
-        # 显示选择区
         if len(st.session_state[gallery_key]) > 0:
             st.divider()
-            st.caption(f"📚 已存 {len(st.session_state[gallery_key])}/10 张 (刷新不丢失)")
-            
-            # 选项列表
+            st.caption(f"📚 已存 {len(st.session_state[gallery_key])}/10 张")
             options = [f"{i+1}. {f.name}" for i, f in enumerate(st.session_state[gallery_key])]
-            selected_option = st.radio("请选择一张：", options, horizontal=True, key=f"radio_{key_prefix}")
+            selected_option = st.radio("请选择：", options, horizontal=True, key=f"radio_{key_prefix}")
             
-            # 清空按钮
             if st.button(f"🗑️ 清空相册", key=f"clear_{key_prefix}"):
                 st.session_state[gallery_key] = []
                 st.rerun()
 
-            # 返回选中的文件
             if selected_option:
                 index = options.index(selected_option)
                 selected_file = st.session_state[gallery_key][index]
                 st.image(selected_file, caption="✅ 当前选中", width=200)
                 return selected_file, "file"
         else:
-            st.info("👈 请上传图片，暂存后可重复使用。")
+            st.info("👈 请上传图片")
 
-    # === Tab 2: URL 模式 ===
-    image_url = None
     with tab2:
         url_input = st.text_input(f"URL", key=f"url_{key_prefix}", placeholder="https://...")
-        if url_input: image_url = url_input
-    
-    if image_url:
-        st.image(image_url, width=200)
-        return image_url, "url"
+        if url_input: 
+            st.image(url_input, width=200)
+            return url_input, "url"
     
     return None, None
 
 # ==========================================
-# 5. 侧边栏与主界面
+# 5. 侧边栏配置 (含同步逻辑升级)
 # ==========================================
 with st.sidebar:
     st.header("⚙️ 参数配置")
     secret_key = st.secrets.get("ARK_API_KEY", None)
     env_key = os.environ.get("ARK_API_KEY", "")
     default_key = secret_key if secret_key else env_key
-    
     api_key = st.text_input("API Key", value=default_key, type="password")
     
     st.divider()
@@ -158,30 +138,55 @@ with st.sidebar:
     
     st.divider()
     st.markdown("### ☁️ 云端同步")
-    if st.button("🔄 同步云端历史记录"):
+    # === 🔄 升级点：同步 20 条 + 解析提示词 ===
+    if st.button("🔄 同步最近20条云端记录"):
         if not api_key:
             st.error("需要 API Key")
         else:
             try:
                 client = Ark(base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=api_key)
-                with st.spinner("正在连接..."):
-                    resp = client.content_generation.tasks.list(page_size=10, status="succeeded")
+                with st.spinner("正在拉取数据并解析..."):
+                    # 修改 1: 获取 20 条
+                    resp = client.content_generation.tasks.list(page_size=20, status="succeeded")
                     count = 0
                     if hasattr(resp, 'items'):
                         for item in resp.items:
+                            # 去重检查
                             if not any(h.get('task_id') == item.id for h in st.session_state.history):
+                                
+                                # 修改 2: 智能解析提示词 (从 item.content 列表中找 type='text')
+                                extracted_prompt = "☁️ 云端同步任务 (无文本)"
+                                try:
+                                    if hasattr(item, 'content') and isinstance(item.content, list):
+                                        for c in item.content:
+                                            # SDK 返回的是对象，尝试访问 .text 属性
+                                            if hasattr(c, 'type') and c.type == 'text' and hasattr(c, 'text'):
+                                                extracted_prompt = c.text
+                                                break
+                                            # 防御性编程：如果是字典格式
+                                            elif isinstance(c, dict) and c.get('type') == 'text':
+                                                extracted_prompt = c.get('text')
+                                                break
+                                except:
+                                    extracted_prompt = "☁️ 解析失败"
+
                                 st.session_state.history.append({
                                     "task_id": item.id,
-                                    "time": "云端记录",
-                                    "prompt": "☁️ 云端同步任务",
+                                    "time": datetime.fromtimestamp(item.created_at).strftime("%m-%d %H:%M") if hasattr(item, 'created_at') else "云端",
+                                    "prompt": extracted_prompt, # 使用解析出来的提示词
                                     "video_url": item.content.video_url,
                                     "model": model_id
                                 })
                                 count += 1
-                        st.success(f"同步了 {count} 条记录")
+                        st.success(f"成功同步 {count} 条新记录！")
+                    else:
+                        st.warning("云端没有找到最近的成功记录。")
             except Exception as e:
-                st.error(str(e))
+                st.error(f"同步失败: {str(e)}")
 
+# ==========================================
+# 6. 主界面
+# ==========================================
 st.title("🎬 豆包视频生成 Pro")
 col1, col2 = st.columns([1.2, 1])
 
@@ -199,7 +204,7 @@ with col2:
 st.divider()
 
 # ==========================================
-# 6. 生成逻辑
+# 7. 生成逻辑
 # ==========================================
 if st.button("🚀 立即生成视频"):
     if not api_key: st.error("❌ 请输入 API Key"); st.stop()
@@ -267,15 +272,17 @@ if st.button("🚀 立即生成视频"):
         st.error(str(e))
 
 # ==========================================
-# 7. 历史记录
+# 8. 历史记录 (倒序展示)
 # ==========================================
 if len(st.session_state.history) > 0:
     st.divider()
-    st.subheader(f"📜 历史记录 ({len(st.session_state.history)})")
+    st.subheader(f"📜 历史记录 (共 {len(st.session_state.history)} 条)")
     for item in reversed(st.session_state.history):
-        with st.expander(f"🕒 {item['time']} - {item.get('task_id', '')}", expanded=True):
+        # 优化显示标题，只取前20个字防止标题过长
+        title_prompt = item['prompt'][:20] + "..." if len(item['prompt']) > 20 else item['prompt']
+        with st.expander(f"🕒 {item['time']} - {title_prompt}", expanded=True):
             h1, h2 = st.columns([1, 1.5])
             h1.video(item['video_url'])
-            h2.info(f"提示词: {item['prompt']}")
-            h2.markdown(f"[📥 下载视频]({item['video_url']})")
-
+            h2.info(f"📄 **提示词:**\n{item['prompt']}")
+            h2.caption(f"ID: {item.get('task_id', 'N/A')}")
+            h2.markdown(f"[📥 下载原视频]({item['video_url']})")
