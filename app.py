@@ -4,7 +4,7 @@ import time
 import requests
 from volcenginesdkarkruntime import Ark
 
-# --- 1. UI 配置 (必须放在代码最开头) ---
+# --- 1. UI 配置 ---
 st.set_page_config(
     page_title="豆包视频生成 Pro",
     page_icon="🎬",
@@ -12,14 +12,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. 自定义 CSS (隐藏水印，美化按钮) ---
+# --- 2. 自定义 CSS ---
 st.markdown("""
 <style>
-    /* 隐藏右上角汉堡菜单和底部 Footer */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    
-    /*以此美化主按钮 */
     div.stButton > button:first-child {
         background-color: #FF4B4B;
         color: white;
@@ -38,21 +35,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 3. 核心功能函数 ---
-
 def upload_to_temp_host(uploaded_file):
-    """
-    修复版：使用 tmpfiles.org 上传图片
-    """
     try:
         url = 'https://tmpfiles.org/api/v1/upload'
         files = {'file': (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
         response = requests.post(url, files=files)
-        
         if response.status_code == 200:
             data = response.json()
             if data.get('status') == 'success':
                 original_url = data['data']['url']
-                # 替换为直链地址
                 return original_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
         return None
     except Exception as e:
@@ -62,62 +53,52 @@ def upload_to_temp_host(uploaded_file):
 def handle_image_input(label, key_prefix):
     st.markdown(f"### {label}")
     tab1, tab2 = st.tabs(["🔗 粘贴链接", "📤 上传图片"])
-    
     image_url = None
     with tab1:
         url_input = st.text_input(f"请输入图片 URL", key=f"url_{key_prefix}")
-        if url_input:
-            image_url = url_input
+        if url_input: image_url = url_input
     with tab2:
         file_input = st.file_uploader(f"选择本地文件", type=["jpg", "png"], key=f"file_{key_prefix}")
         if file_input:
             st.image(file_input, width=150)
             return file_input, "file"
-            
     if image_url:
         st.image(image_url, width=150)
         return image_url, "url"
-    
     return None, None
 
 # --- 4. 页面主结构 ---
-
 st.title("🎬 豆包视频生成器")
-st.markdown("##### 🚀 基于 Volcengine Ark | AI Video Generation")
+st.markdown("##### 🚀 基于 Volcengine Ark | Custom Resolution Supported")
 st.divider()
 
 # 侧边栏
 with st.sidebar:
     st.header("⚙️ 参数配置")
     
-    # 获取 API Key (优先读 Secrets，没有则读输入框)
     secret_key = st.secrets.get("ARK_API_KEY", None)
     env_key = os.environ.get("ARK_API_KEY", "")
     default_key = secret_key if secret_key else env_key
     
-    api_key = st.text_input("API Key", value=default_key, type="password", help="请在 Streamlit Secrets 中配置以隐藏")
-    
+    api_key = st.text_input("API Key", value=default_key, type="password")
     st.write("---")
+    
     model_id = st.text_input("模型 ID", value="doubao-seedance-1-5-pro-251215")
+    
+    # === 新增：清晰度选择 ===
+    resolution = st.selectbox("清晰度 (Resolution)", ["720p", "1080p"], index=0, help="注意：部分旧模型可能不支持 1080p")
+    
     ratio = st.selectbox("视频比例", ["adaptive", "16:9", "9:16", "1:1"])
     duration = st.slider("视频时长 (秒)", 2, 10, 5)
-    
-    st.info("💡 提示：更长的视频生成时间会更久")
 
-# 主内容区：使用两列布局
 col1, col2 = st.columns([1.2, 1])
-
 with col1:
     st.success("📝 **第一步：输入提示词**")
     prompt_text = st.text_area("描述你想要的视频画面", value="图中女孩对着镜头说\"茄子\"，360度环绕运镜", height=150)
-    
     st.warning("🖼️ **第二步：上传图片**")
-    # 首帧
     first_frame_data, first_frame_type = handle_image_input("首帧图片 (必填)", "first")
-    
 with col2:
-    st.markdown("<br><br>", unsafe_allow_html=True) # 占位符，为了对齐
-    # 尾帧
+    st.markdown("<br><br>", unsafe_allow_html=True)
     last_frame_data, last_frame_type = handle_image_input("尾帧图片 (可选)", "last")
 
 st.divider()
@@ -125,18 +106,15 @@ st.divider()
 # --- 5. 执行逻辑 ---
 if st.button("🚀 立即生成视频"):
     if not api_key:
-        st.error("❌ 未检测到 API Key，请在侧边栏输入或配置 Secrets")
+        st.error("❌ 未检测到 API Key")
         st.stop()
-        
     if not first_frame_data:
-        st.error("❌ 请务必上传或输入首帧图片")
+        st.error("❌ 请务必上传首帧图片")
         st.stop()
 
-    # 漂亮的进度显示组件
     status_container = st.status("🚀 任务初始化中...", expanded=True)
     
     try:
-        # 上传逻辑
         final_first_url = first_frame_data
         final_last_url = last_frame_data
 
@@ -144,66 +122,60 @@ if st.button("🚀 立即生成视频"):
             status_container.write("📤 正在上传首帧图片...")
             final_first_url = upload_to_temp_host(first_frame_data)
             if not final_first_url:
-                status_container.update(label="❌ 图片上传失败", state="error")
-                st.stop()
+                status_container.update(label="❌ 上传失败", state="error"); st.stop()
 
         if last_frame_type == "file" and last_frame_data:
             status_container.write("📤 正在上传尾帧图片...")
             final_last_url = upload_to_temp_host(last_frame_data)
             if not final_last_url:
-                status_container.update(label="❌ 图片上传失败", state="error")
-                st.stop()
+                status_container.update(label="❌ 上传失败", state="error"); st.stop()
 
-        # API 调用
         client = Ark(base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=api_key)
         
         content_payload = [
             {"type": "text", "text": prompt_text},
             {"type": "image_url", "image_url": {"url": final_first_url}, "role": "first_frame"}
         ]
-        
         if final_last_url:
             content_payload.append(
                 {"type": "image_url", "image_url": {"url": final_last_url}, "role": "last_frame"}
             )
 
-        status_container.write("🤖 AI 正在思考并生成视频 (预计 1-2 分钟)...")
+        status_container.write(f"🤖 正在生成 ({resolution}, {ratio})...")
         
+        # === 更新 API 调用 ===
         create_result = client.content_generation.tasks.create(
             model=model_id,
             content=content_payload,
             generate_audio=True,
             ratio=ratio,
+            resolution=resolution, # 传递分辨率参数
             duration=duration,
         )
         task_id = create_result.id
         status_container.write(f"🆔 任务 ID: `{task_id}`")
 
-        # 轮询
         start_time = time.time()
         while True:
             if time.time() - start_time > 600:
-                status_container.update(label="❌ 任务超时", state="error")
-                break
+                status_container.update(label="❌ 超时", state="error"); break
 
             get_result = client.content_generation.tasks.get(task_id=task_id)
             status = get_result.status
             
             if status == "succeeded":
                 video_url = get_result.content.video_url
-                status_container.update(label="✅ 生成成功！", state="complete", expanded=False)
-                
-                st.balloons() # 撒花特效
-                st.markdown("### 🎬 你的视频准备好了：")
+                status_container.update(label="✅ 成功！", state="complete", expanded=False)
+                st.balloons()
                 st.video(video_url)
                 break
             elif status == "failed":
-                status_container.update(label="❌ 生成失败", state="error")
-                st.error(f"错误详情: {get_result.error}")
+                status_container.update(label="❌ 失败", state="error")
+                st.error(f"Error: {get_result.error}")
                 break
             else:
                 time.sleep(3)
 
     except Exception as e:
-        status_container.update(label="❌ 系统错误", state="error")
-        st.error(f"发生异常: {str(e)}")
+        status_container.update(label="❌ 异常", state="error")
+        st.error(f"Exception: {str(e)}")
