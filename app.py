@@ -10,23 +10,25 @@ st.set_page_config(page_title="豆包视频生成器 (含上传功能)", layout=
 st.title("🎬 豆包视频生成 (Pro版)")
 st.markdown("支持本地图片上传 -> 自动转 URL -> 生成视频")
 
-# --- 辅助函数：上传本地文件到临时公网存储 ---
+# --- 辅助函数：上传本地文件到 tmpfiles.org ---
 def upload_to_temp_host(uploaded_file):
     """
-    将 Streamlit 的上传文件发送到 file.io 获取临时公网 URL。
-    注意：file.io 的免费链接通常在被访问一次后失效，或保存时间有限。
-    在生产环境中，请替换为您自己的 TOS/OSS 上传代码。
+    将文件上传到 tmpfiles.org 并获取直链
     """
     try:
-        # file.io 接口地址
-        url = 'https://file.io/?expires=1d' # 设置1天过期
+        # 使用 tmpfiles.org 的 API
+        url = 'https://tmpfiles.org/api/v1/upload'
         files = {'file': (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
         response = requests.post(url, files=files)
         
         if response.status_code == 200:
-            result = response.json()
-            if result.get('success'):
-                return result.get('link')
+            data = response.json()
+            if data.get('status') == 'success':
+                original_url = data['data']['url']
+                # 关键步骤：tmpfiles.org 返回的地址是预览页，
+                # 需要把 /tmpfiles.org/ 替换为 /tmpfiles.org/dl/ 才是图片直链
+                direct_url = original_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+                return direct_url
         return None
     except Exception as e:
         st.error(f"图片上传失败: {e}")
@@ -175,4 +177,5 @@ if st.button("🚀 开始生成视频", type="primary", use_container_width=True
 
     except Exception as e:
         status_box.update(label="发生系统错误", state="error")
+
         st.error(str(e))
