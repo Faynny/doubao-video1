@@ -49,7 +49,7 @@ st.markdown("""
     }
     div.stButton > button:hover { background-color: #FF2B2B; color: white; }
     
-    /* 针对取消按钮的特殊样式（让它看起来不同） */
+    /* 针对取消按钮的特殊样式 */
     div[data-testid="column"] button[kind="secondary"] {
         background-color: #6c757d;
     }
@@ -79,7 +79,7 @@ def extract_prompt_from_item(item):
         return "☁️ 云端同步 (未识别到文本)"
     except: return "☁️ 解析错误"
 
-# --- 核心升级：增加“取消选中”按钮 ---
+# --- 核心修复区：handle_image_input ---
 def handle_image_input(label, key_prefix):
     st.markdown(f"**{label}**")
     gallery_key = f"gallery_{key_prefix}"
@@ -95,7 +95,7 @@ def handle_image_input(label, key_prefix):
                         st.session_state[gallery_key].append(f)
         
         if st.session_state[gallery_key]:
-            # 缩略图预览
+            # 缩略图
             with st.expander(f"👁️ 展开预览 ({len(st.session_state[gallery_key])}张)", expanded=False):
                 cols = st.columns(5)
                 for i, img_file in enumerate(st.session_state[gallery_key]):
@@ -107,18 +107,20 @@ def handle_image_input(label, key_prefix):
             # 单选框
             sel = st.radio("请选择一张作为输入:", options, horizontal=True, key=f"r_{key_prefix}", index=None)
             
-            # === 按钮区 ===
             b_col1, b_col2 = st.columns([1, 1])
             
-            # 按钮1：清空所有图片
+            # 按钮1：清空
             if b_col1.button("🗑️ 清空相册", key=f"c_{key_prefix}"):
                 st.session_state[gallery_key] = []
                 st.rerun()
             
-            # 按钮2：(新功能) 仅取消勾选
-            if b_col2.button("❌ 取消选中", key=f"d_{key_prefix}"):
-                st.session_state[f"r_{key_prefix}"] = None # 强制把单选框的值设为空
-                st.rerun() # 刷新界面
+            # === 修复点：使用 on_click 回调来清空选中状态 ===
+            b_col2.button(
+                "❌ 取消选中", 
+                key=f"d_{key_prefix}", 
+                on_click=lambda: st.session_state.update({f"r_{key_prefix}": None})
+            )
+            # ==========================================
                 
             if sel: 
                 selected_file = st.session_state[gallery_key][options.index(sel)]
