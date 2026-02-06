@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-APP_PASSWORD = "HYMS"  # <--- 你的密码
+APP_PASSWORD = "123456"  # <--- 你的密码
 
 # --- 登录逻辑 ---
 if "authenticated" not in st.session_state:
@@ -48,13 +48,9 @@ st.markdown("""
         height: 45px; font-size: 18px; font-weight: bold; width: 100%; border: none;
     }
     div.stButton > button:hover { background-color: #FF2B2B; color: white; }
-    
-    /* 取消按钮样式 */
     div[data-testid="column"] button[kind="secondary"] {
         background-color: #6c757d;
     }
-    
-    /* 卡片微调 */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         padding: 10px;
     }
@@ -137,7 +133,6 @@ with st.sidebar:
     duration = st.slider("时长", 2, 10, 5)
     
     st.divider()
-    # === 修改点 1: 同步数量改为 50 ===
     if st.button("🔄 同步最近 50 条"):
         if not api_key:
             st.error("缺 API Key")
@@ -145,7 +140,6 @@ with st.sidebar:
             try:
                 client = Ark(base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=api_key)
                 with st.spinner("正在拉取大量数据..."):
-                    # 修改为 50 条
                     resp = client.content_generation.tasks.list(page_size=50, status="succeeded")
                     count = 0
                     if hasattr(resp, 'items'):
@@ -244,28 +238,20 @@ if st.session_state.history:
     st.divider()
     st.subheader(f"📜 历史记录 ({len(st.session_state.history)})")
     
-    # === 修改点 2: 网格布局逻辑 ===
-    # 创建 3 列
     cols = st.columns(3)
     
-    # 遍历所有历史记录
     for index, item in enumerate(st.session_state.history):
-        # 巧妙算法：index % 3 决定了放在第几列 (0, 1, 2 循环)
         with cols[index % 3]:
-            # 使用 container 模拟卡片效果
             with st.container(border=True):
-                # 1. 视频
                 st.video(item['video_url'])
-                
-                # 2. 简要信息
                 st.caption(f"🕒 {item['time']}")
                 
-                # 3. 提示词 (截断显示，防止卡片太长)
                 short_prompt = item['prompt'][:20] + "..." if len(item['prompt']) > 20 else item['prompt']
                 st.markdown(f"**Prompt:** {short_prompt}")
                 
-                # 4. 详情折叠区 (保持卡片整洁)
-                with st.expander("查看详情 & 下载"):
-                    st.text_area("完整提示词", item['prompt'], height=80, disabled=True)
+                with st.expander("查看详情"):
+                    # === 修复点在这里 ===
+                    # 我加上了 key=f"txt_{index}"，给每个输入框一个唯一的身份证
+                    st.text_area("完整提示词", item['prompt'], height=80, disabled=True, key=f"txt_{index}")
                     st.text(f"ID: {item.get('task_id')}")
-                    st.markdown(f"**[📥 点击下载视频]({item['video_url']})**")
+                    st.markdown(f"**[📥 下载视频]({item['video_url']})**")
