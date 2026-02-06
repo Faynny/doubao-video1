@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 # === 🔐 安全配置 ===
-APP_PASSWORD = "HYMS"       # <--- 请修改你的密码
+APP_PASSWORD = "123456"       
 DB_FILE = "local_prompts.json"
 
 # === 🎨 全局样式优化 ===
@@ -28,12 +28,13 @@ st.markdown("""
     div.stButton > button:first-child { border-radius: 8px; font-weight: bold; }
     div[data-testid="stFileUploader"] { padding-top: 10px; }
     
-    /* 让历史相册按钮里的文字不要太小 */
+    /* 历史相册按钮样式优化 */
     div[data-testid="stExpander"] button {
         font-size: 12px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        text-align: left; /* 文字左对齐更像列表 */
     }
 </style>
 """, unsafe_allow_html=True)
@@ -88,11 +89,11 @@ def upload_to_temp_host(uploaded_file):
     except: return None
 
 # ==========================================
-# 🔥 核心组件：卡片 + 按钮式选择
+# 🔥 核心组件：自动重命名 + 错误自愈
 # ==========================================
 def image_card_component(label, key_prefix, icon="🖼️"):
     """
-    渲染一个高度对齐、支持点击按钮直接选择图片的组件
+    渲染一个高度对齐、支持重名处理、移除不报错的图片组件
     """
     gallery_key = f"gallery_{key_prefix}"
     selected_key = f"selected_{key_prefix}"
@@ -109,6 +110,7 @@ def image_card_component(label, key_prefix, icon="🖼️"):
         # --- A. 预览区 (固定高度 200px) ---
         if current_file:
             try:
+                # 尝试读取并渲染
                 current_file.seek(0)
                 b64_data = base64.b64encode(current_file.read()).decode()
                 mime_type = current_file.type
@@ -121,12 +123,16 @@ def image_card_component(label, key_prefix, icon="🖼️"):
                     </div>
                     """, unsafe_allow_html=True
                 )
+                
+                # 移除按钮
                 if st.button(f"❌ 移除图片", key=f"rm_{key_prefix}", use_container_width=True):
                     st.session_state[selected_key] = None
                     st.rerun()
-            except:
-                st.error("预览失败")
+                    
+            except Exception:
+                # 🔥 自愈机制：如果预览出错（比如文件流断了），自动清空并重置，不再显示红字报错
                 st.session_state[selected_key] = None
+                st.rerun()
         else:
             # 占位符
             st.markdown(
@@ -141,41 +147,44 @@ def image_card_component(label, key_prefix, icon="🖼️"):
         st.divider()
 
         # --- B. 上传区 ---
-        uploaded_files = st.file_uploader("上传新图", type=["jpg", "png"], accept_multiple_files=True, key=f"u_{key_prefix}", label_visibility="collapsed")
+        uploaded_files = st.file_uploader("上传新图", type=["jpg", "png", "jpeg"], accept_multiple_files=True, key=f"u_{key_prefix}", label_visibility="collapsed")
         
         if uploaded_files:
             new_upload = False
             for f in uploaded_files:
-                if len(st.session_state[gallery_key]) < 10:
+                if len(st.session_state[gallery_key]) < 20: # 限制20张
+                    
+                    # 🔥 核心修复：防止同名覆盖
+                    # 自动给文件名加上时间戳前缀 [时:分:秒]
+                    # 这样即使是 image.png 也会变成 [10:20:05] image.png，保证唯一性
+                    time_prefix = datetime.now().strftime("[%H:%M:%S]")
+                    # 修改文件对象的 name 属性
+                    f.name = f"{time_prefix} {f.name}"
+                    
+                    # 检查是否真的还重复 (理论上加上秒数很难重复了)
                     names = [x.name for x in st.session_state[gallery_key]]
                     if f.name not in names:
                         st.session_state[gallery_key].append(f)
                         st.session_state[selected_key] = f
                         new_upload = True
+            
             if new_upload: st.rerun()
 
         # --- C. 历史相册 (按钮选择模式) ---
         if st.session_state[gallery_key]:
-            # 默认展开，方便选择
             with st.expander(f"📚 历史相册 ({len(st.session_state[gallery_key])})", expanded=True):
                 
-                # 创建 4 列网格
                 cols = st.columns(4)
                 for i, img in enumerate(st.session_state[gallery_key]):
                     with cols[i % 4]:
-                        # 1. 显示缩略图
                         st.image(img, use_container_width=True)
                         
-                        # 2. 判断这张图是否被选中
                         is_selected = (current_file == img)
-                        
-                        # 3. 按钮：既显示名字，又是选择开关
-                        # 如果被选中，按钮变红(Primary)，显示 ✅
                         btn_label = f"✅ {img.name}" if is_selected else img.name
                         btn_type = "primary" if is_selected else "secondary"
                         
-                        # 点击按钮 -> 选中这张图
-                        if st.button(btn_label, key=f"sel_{key_prefix}_{i}", use_container_width=True, type=btn_type, help="点击选择这张图片"):
+                        # 按钮点击
+                        if st.button(btn_label, key=f"sel_{key_prefix}_{i}", use_container_width=True, type=btn_type, help="点击选择"):
                             st.session_state[selected_key] = img
                             st.rerun()
                 
