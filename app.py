@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import time
 import requests
+import json
 from datetime import datetime
 from volcenginesdkarkruntime import Ark
 
@@ -16,6 +17,7 @@ st.set_page_config(
 )
 
 APP_PASSWORD = "HYMS"  # <--- 你的密码
+DB_FILE = "local_prompts.json" # 我们的“小账本”文件
 
 # --- 登录逻辑 ---
 if "authenticated" not in st.session_state:
@@ -34,7 +36,30 @@ if not st.session_state.authenticated:
     st.stop() 
 
 # ==========================================
-# 2. 初始化与辅助函数
+# 2. 本地数据库管理 (核心新增功能)
+# ==========================================
+def load_local_db():
+    """读取本地小账本"""
+    if not os.path.exists(DB_FILE):
+        return {}
+    try:
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_to_local_db(task_id, prompt):
+    """把 ID 和提示词记在账本上"""
+    db = load_local_db()
+    db[task_id] = prompt
+    try:
+        with open(DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(db, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"保存失败: {e}")
+
+# ==========================================
+# 3. 初始化与辅助函数
 # ==========================================
 if "history" not in st.session_state:
     st.session_state.history = []
@@ -48,12 +73,8 @@ st.markdown("""
         height: 45px; font-size: 18px; font-weight: bold; width: 100%; border: none;
     }
     div.stButton > button:hover { background-color: #FF2B2B; color: white; }
-    div[data-testid="column"] button[kind="secondary"] {
-        background-color: #6c757d;
-    }
-    div[data-testid="stVerticalBlockBorderWrapper"] {
-        padding: 10px;
-    }
+    div[data-testid="column"] button[kind="secondary"] { background-color: #6c757d; }
+    div[data-testid="stVerticalBlockBorderWrapper"] { padding: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -69,7 +90,19 @@ def upload_to_temp_host(uploaded_file):
         return None
     except: return None
 
-def extract_prompt_from_item(item):
+# --- 智能提取函数 (结合本地账本) ---
+def get_prompt_intelligent(item):
+    """
+    先查本地账本，如果没有，再尝试从 API 提取，最后兜底。
+    """
+    task_id = item.id
+    
+    # 1. 优先查本地数据库 (最准确)
+    local_db = load_local_db()
+    if task_id in local_db:
+        return "📝 " + local_db[task_id] # 加个图标表示是本地找回的
+    
+    # 2. 尝试从 API 结构里找 (虽然通常没有)
     try:
         if hasattr(item, 'content') and isinstance(item.content, list):
             for c in item.content:
@@ -77,8 +110,13 @@ def extract_prompt_from_item(item):
                     return getattr(c, 'text', '')
                 if isinstance(c, dict) and c.get('type') == 'text':
                     return c.get('text', '')
-        return "☁️ 云端同步 (未识别到文本)"
-    except: return "☁️ 解析错误"
+    except: pass
+    
+    # 3. 如果都没有，返回基本信息兜底
+    meta = []
+    if hasattr(item, 'resolution'): meta.append(str(item.resolution))
+    if hasattr(item, 'duration'): meta.append(f"{item.duration}s")
+    return f"☁️ 云端任务 ({' | '.join(meta)}) - 无提示词记录"
 
 def handle_image_input(label, key_prefix):
     st.markdown(f"**{label}**")
@@ -108,7 +146,6 @@ def handle_image_input(label, key_prefix):
             if b_col1.button("🗑️ 清空", key=f"c_{key_prefix}"):
                 st.session_state[gallery_key] = []
                 st.rerun()
-            
             b_col2.button("❌ 取消", key=f"d_{key_prefix}", on_click=lambda: st.session_state.update({f"r_{key_prefix}": None}))
                 
             if sel: 
@@ -121,11 +158,12 @@ def handle_image_input(label, key_prefix):
     return None, None
 
 # ==========================================
-# 3. 侧边栏
+# 4. 侧边栏
 # ==========================================
 with st.sidebar:
     st.header("⚙️ 配置")
     api_key = st.text_input("API Key", value=st.secrets.get("ARK_API_KEY", os.environ.get("ARK_API_KEY", "")), type="password")
+    
     st.divider()
     model_id = st.text_input("模型ID", value="doubao-seedance-1-5-pro-251215")
     resolution = st.selectbox("清晰度", ["720p", "1080p"])
@@ -139,13 +177,17 @@ with st.sidebar:
         else:
             try:
                 client = Ark(base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=api_key)
-                with st.spinner("正在拉取大量数据..."):
+                with st.spinner("正在拉取数据并匹配本地账本..."):
                     resp = client.content_generation.tasks.list(page_size=50, status="succeeded")
                     count = 0
                     if hasattr(resp, 'items'):
                         for item in resp.items:
                             if not any(h.get('task_id') == item.id for h in st.session_state.history):
-                                prompt_str = extract_prompt_from_item(item)
+                                
+                                # === 调用智能提取 (查本地库) ===
+                                prompt_str = get_prompt_intelligent(item)
+                                # ===========================
+                                
                                 created_ts = getattr(item, 'created_at', 0)
                                 st.session_state.history.append({
                                     "task_id": item.id,
@@ -157,12 +199,12 @@ with st.sidebar:
                                 })
                                 count += 1
                         st.session_state.history.sort(key=lambda x: x['created_at'], reverse=True)
-                        st.success(f"同步了 {count} 条")
+                        st.success(f"同步成功！匹配本地记录 {count} 条")
                     else: st.warning("无数据")
             except Exception as e: st.error(str(e))
 
 # ==========================================
-# 4. 主界面
+# 5. 主界面
 # ==========================================
 st.title("🎬 豆包视频生成 Pro")
 c1, c2 = st.columns([1.2, 1])
@@ -198,6 +240,10 @@ if st.button("🚀 生成视频"):
         )
         task_id = res.id
         
+        # === 核心：提交成功后，立即保存到本地账本 ===
+        save_to_local_db(task_id, prompt_text)
+        # ========================================
+        
         start = time.time()
         status.write(f"🆔 任务ID: {task_id}")
         
@@ -216,7 +262,7 @@ if st.button("🚀 生成视频"):
                     "task_id": task_id,
                     "created_at": time.time(),
                     "time": datetime.now().strftime("%m-%d %H:%M"),
-                    "prompt": prompt_text,
+                    "prompt": prompt_text, # 这里直接用当前的 prompt
                     "video_url": v_url,
                     "model": model_id
                 }
@@ -232,26 +278,25 @@ if st.button("🚀 生成视频"):
     except Exception as e: status.update(label="异常", state="error"); st.error(str(e))
 
 # ==========================================
-# 5. 历史记录 (网格布局版)
+# 6. 历史记录 (网格布局)
 # ==========================================
 if st.session_state.history:
     st.divider()
     st.subheader(f"📜 历史记录 ({len(st.session_state.history)})")
     
     cols = st.columns(3)
-    
     for index, item in enumerate(st.session_state.history):
         with cols[index % 3]:
             with st.container(border=True):
                 st.video(item['video_url'])
                 st.caption(f"🕒 {item['time']}")
                 
-                short_prompt = item['prompt'][:20] + "..." if len(item['prompt']) > 20 else item['prompt']
-                st.markdown(f"**Prompt:** {short_prompt}")
+                p_text = item['prompt']
+                short_p = p_text[:20] + "..." if len(p_text) > 20 else p_text
+                st.markdown(f"**Prompt:** {short_p}")
                 
-                with st.expander("查看详情"):
-                    # === 修复点在这里 ===
-                    # 我加上了 key=f"txt_{index}"，给每个输入框一个唯一的身份证
-                    st.text_area("完整提示词", item['prompt'], height=80, disabled=True, key=f"txt_{index}")
+                with st.expander("详情"):
+                    # 这里的 prompt 会优先显示我们刚才存进去的
+                    st.text_area("完整提示词", item['prompt'], height=80, disabled=True, key=f"t_{index}")
                     st.text(f"ID: {item.get('task_id')}")
                     st.markdown(f"**[📥 下载视频]({item['video_url']})**")
