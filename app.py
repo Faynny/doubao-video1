@@ -15,8 +15,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-APP_PASSWORD = "123456"  # <--- 你的密码
+APP_PASSWORD = "HYMS"  # <--- 你的密码
 
+# --- 登录逻辑 ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -68,29 +69,16 @@ def upload_to_temp_host(uploaded_file):
         return None
     except: return None
 
-# --- 🔍 增强版提取函数 ---
 def extract_prompt_from_item(item):
-    """
-    尝试从 API 返回的 item 中挖掘提示词
-    """
     try:
-        # 1. 尝试从 content 列表里找 type='text' (最常见)
         if hasattr(item, 'content') and isinstance(item.content, list):
             for c in item.content:
-                # 兼容对象属性 (.type) 和字典属性 (['type'])
-                c_type = getattr(c, 'type', c.get('type') if isinstance(c, dict) else '')
-                if c_type == 'text':
-                    return getattr(c, 'text', c.get('text') if isinstance(c, dict) else '')
-
-        # 2. 尝试找 input 字段 (部分模型)
-        if hasattr(item, 'request') and item.request:
-             # 如果返回了原始请求信息
-             pass 
-
-        # 3. 如果实在找不到
-        return "☁️ (未识别到提示词，请开启调试模式查看)"
-    except Exception:
-        return "☁️ 解析异常"
+                if hasattr(c, 'type') and c.type == 'text':
+                    return getattr(c, 'text', '')
+                if isinstance(c, dict) and c.get('type') == 'text':
+                    return c.get('text', '')
+        return "☁️ 云端同步 (未识别到文本)"
+    except: return "☁️ 解析错误"
 
 def handle_image_input(label, key_prefix):
     st.markdown(f"**{label}**")
@@ -138,10 +126,6 @@ def handle_image_input(label, key_prefix):
 with st.sidebar:
     st.header("⚙️ 配置")
     api_key = st.text_input("API Key", value=st.secrets.get("ARK_API_KEY", os.environ.get("ARK_API_KEY", "")), type="password")
-    
-    # === 🆕 新增：调试开关 ===
-    debug_mode = st.toggle("🐞 开启调试模式 (查看原始数据)")
-    
     st.divider()
     model_id = st.text_input("模型ID", value="doubao-seedance-1-5-pro-251215")
     resolution = st.selectbox("清晰度", ["720p", "1080p"])
@@ -163,21 +147,13 @@ with st.sidebar:
                             if not any(h.get('task_id') == item.id for h in st.session_state.history):
                                 prompt_str = extract_prompt_from_item(item)
                                 created_ts = getattr(item, 'created_at', 0)
-                                
-                                # 将原始 item 转为字典保存，方便调试
-                                try:
-                                    raw_data = item.to_dict()
-                                except:
-                                    raw_data = str(item)
-
                                 st.session_state.history.append({
                                     "task_id": item.id,
                                     "created_at": created_ts,
                                     "time": datetime.fromtimestamp(created_ts).strftime("%m-%d %H:%M"),
                                     "prompt": prompt_str,
                                     "video_url": item.content.video_url,
-                                    "model": model_id,
-                                    "raw_data": raw_data # 保存原始数据
+                                    "model": model_id
                                 })
                                 count += 1
                         st.session_state.history.sort(key=lambda x: x['created_at'], reverse=True)
@@ -242,8 +218,7 @@ if st.button("🚀 生成视频"):
                     "time": datetime.now().strftime("%m-%d %H:%M"),
                     "prompt": prompt_text,
                     "video_url": v_url,
-                    "model": model_id,
-                    "raw_data": {} # 本地生成的不用raw_data，因为prompt就在内存里
+                    "model": model_id
                 }
                 st.session_state.history.insert(0, new_record)
                 st.balloons()
@@ -257,7 +232,7 @@ if st.button("🚀 生成视频"):
     except Exception as e: status.update(label="异常", state="error"); st.error(str(e))
 
 # ==========================================
-# 5. 历史记录 (网格布局 + 调试功能)
+# 5. 历史记录 (网格布局版)
 # ==========================================
 if st.session_state.history:
     st.divider()
@@ -275,17 +250,8 @@ if st.session_state.history:
                 st.markdown(f"**Prompt:** {short_prompt}")
                 
                 with st.expander("查看详情"):
+                    # === 修复点在这里 ===
+                    # 我加上了 key=f"txt_{index}"，给每个输入框一个唯一的身份证
                     st.text_area("完整提示词", item['prompt'], height=80, disabled=True, key=f"txt_{index}")
                     st.text(f"ID: {item.get('task_id')}")
                     st.markdown(f"**[📥 下载视频]({item['video_url']})**")
-                    
-                    # === 🐞 调试功能 ===
-                    if debug_mode:
-                        st.divider()
-                        st.markdown("**🔍 原始 JSON 数据:**")
-                        # 如果有 raw_data 就显示，没有就显示“本地生成无原始数据”
-                        rd = item.get('raw_data')
-                        if rd:
-                            st.json(rd)
-                        else:
-                            st.info("这是本次本地生成的记录，无云端JSON")
