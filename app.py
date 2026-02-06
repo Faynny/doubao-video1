@@ -49,9 +49,14 @@ st.markdown("""
     }
     div.stButton > button:hover { background-color: #FF2B2B; color: white; }
     
-    /* 针对取消按钮的特殊样式 */
+    /* 取消按钮样式 */
     div[data-testid="column"] button[kind="secondary"] {
         background-color: #6c757d;
+    }
+    
+    /* 卡片微调 */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        padding: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -79,7 +84,6 @@ def extract_prompt_from_item(item):
         return "☁️ 云端同步 (未识别到文本)"
     except: return "☁️ 解析错误"
 
-# --- 核心修复区：handle_image_input ---
 def handle_image_input(label, key_prefix):
     st.markdown(f"**{label}**")
     gallery_key = f"gallery_{key_prefix}"
@@ -95,36 +99,25 @@ def handle_image_input(label, key_prefix):
                         st.session_state[gallery_key].append(f)
         
         if st.session_state[gallery_key]:
-            # 缩略图
-            with st.expander(f"👁️ 展开预览 ({len(st.session_state[gallery_key])}张)", expanded=False):
+            with st.expander(f"👁️ 预览 ({len(st.session_state[gallery_key])}张)", expanded=False):
                 cols = st.columns(5)
                 for i, img_file in enumerate(st.session_state[gallery_key]):
                     with cols[i % 5]:
-                        st.image(img_file, caption=f"序号 {i+1}", use_container_width=True)
+                        st.image(img_file, caption=f"{i+1}", use_container_width=True)
 
             options = [f"{i+1}. {f.name}" for i, f in enumerate(st.session_state[gallery_key])]
-            
-            # 单选框
-            sel = st.radio("请选择一张作为输入:", options, horizontal=True, key=f"r_{key_prefix}", index=None)
+            sel = st.radio("选择:", options, horizontal=True, key=f"r_{key_prefix}", index=None)
             
             b_col1, b_col2 = st.columns([1, 1])
-            
-            # 按钮1：清空
-            if b_col1.button("🗑️ 清空相册", key=f"c_{key_prefix}"):
+            if b_col1.button("🗑️ 清空", key=f"c_{key_prefix}"):
                 st.session_state[gallery_key] = []
                 st.rerun()
             
-            # === 修复点：使用 on_click 回调来清空选中状态 ===
-            b_col2.button(
-                "❌ 取消选中", 
-                key=f"d_{key_prefix}", 
-                on_click=lambda: st.session_state.update({f"r_{key_prefix}": None})
-            )
-            # ==========================================
+            b_col2.button("❌ 取消", key=f"d_{key_prefix}", on_click=lambda: st.session_state.update({f"r_{key_prefix}": None}))
                 
             if sel: 
                 selected_file = st.session_state[gallery_key][options.index(sel)]
-                st.image(selected_file, caption="✅ 已选中这张", width=250)
+                st.image(selected_file, caption="✅ 选中", width=250)
                 return selected_file, "file"
     with tab2:
         url = st.text_input("URL", key=f"url_{key_prefix}")
@@ -144,14 +137,16 @@ with st.sidebar:
     duration = st.slider("时长", 2, 10, 5)
     
     st.divider()
-    if st.button("🔄 同步最近 20 条"):
+    # === 修改点 1: 同步数量改为 50 ===
+    if st.button("🔄 同步最近 50 条"):
         if not api_key:
             st.error("缺 API Key")
         else:
             try:
                 client = Ark(base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=api_key)
-                with st.spinner("同步中..."):
-                    resp = client.content_generation.tasks.list(page_size=20, status="succeeded")
+                with st.spinner("正在拉取大量数据..."):
+                    # 修改为 50 条
+                    resp = client.content_generation.tasks.list(page_size=50, status="succeeded")
                     count = 0
                     if hasattr(resp, 'items'):
                         for item in resp.items:
@@ -214,14 +209,14 @@ if st.button("🚀 生成视频"):
         
         while True:
             elapsed = int(time.time() - start)
-            status.update(label=f"🚀 任务运行中... (已耗时 {elapsed}s)", state="running")
+            status.update(label=f"🚀 运行中... ({elapsed}s)", state="running")
             
             if elapsed > 600: status.update(label="超时", state="error"); break
             
             get_res = client.content_generation.tasks.get(task_id=task_id)
             if get_res.status == "succeeded":
                 v_url = get_res.content.video_url
-                status.update(label=f"✅ 成功！(总耗时 {elapsed}s)", state="complete", expanded=False)
+                status.update(label=f"✅ 成功 ({elapsed}s)", state="complete", expanded=False)
                 
                 new_record = {
                     "task_id": task_id,
@@ -243,16 +238,34 @@ if st.button("🚀 生成视频"):
     except Exception as e: status.update(label="异常", state="error"); st.error(str(e))
 
 # ==========================================
-# 5. 历史记录
+# 5. 历史记录 (网格布局版)
 # ==========================================
 if st.session_state.history:
     st.divider()
     st.subheader(f"📜 历史记录 ({len(st.session_state.history)})")
-    for item in st.session_state.history:
-        p_show = item['prompt'][:30] + "..." if len(item['prompt']) > 30 else item['prompt']
-        with st.expander(f"🕒 {item['time']} - {p_show}", expanded=True):
-            hc1, hc2 = st.columns([1, 1.5])
-            hc1.video(item['video_url'])
-            hc2.info(f"📄 **提示词:**\n{item['prompt']}")
-            hc2.caption(f"ID: {item.get('task_id')}")
-            hc2.markdown(f"[📥 下载]({item['video_url']})")
+    
+    # === 修改点 2: 网格布局逻辑 ===
+    # 创建 3 列
+    cols = st.columns(3)
+    
+    # 遍历所有历史记录
+    for index, item in enumerate(st.session_state.history):
+        # 巧妙算法：index % 3 决定了放在第几列 (0, 1, 2 循环)
+        with cols[index % 3]:
+            # 使用 container 模拟卡片效果
+            with st.container(border=True):
+                # 1. 视频
+                st.video(item['video_url'])
+                
+                # 2. 简要信息
+                st.caption(f"🕒 {item['time']}")
+                
+                # 3. 提示词 (截断显示，防止卡片太长)
+                short_prompt = item['prompt'][:20] + "..." if len(item['prompt']) > 20 else item['prompt']
+                st.markdown(f"**Prompt:** {short_prompt}")
+                
+                # 4. 详情折叠区 (保持卡片整洁)
+                with st.expander("查看详情 & 下载"):
+                    st.text_area("完整提示词", item['prompt'], height=80, disabled=True)
+                    st.text(f"ID: {item.get('task_id')}")
+                    st.markdown(f"**[📥 点击下载视频]({item['video_url']})**")
