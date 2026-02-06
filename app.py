@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 # === 🔐 安全配置 ===
-APP_PASSWORD = "123456"       
+APP_PASSWORD = "HYMS"       
 DB_FILE = "local_prompts.json"
 
 # === 🎨 全局样式优化 ===
@@ -329,3 +329,4 @@ if "history" in st.session_state and st.session_state.history:
                     st.caption(f"🕒 {item['time']}")
                     st.text_area("Prompt", clean, height=70, disabled=True, key=f"t_{index}")
                     st.markdown(f"[📥 下载]({item['video_url']})")
+
