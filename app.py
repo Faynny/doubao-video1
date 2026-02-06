@@ -3,6 +3,7 @@ import os
 import time
 import requests
 import json
+import base64
 from datetime import datetime
 from volcenginesdkarkruntime import Ark
 
@@ -36,6 +37,16 @@ st.markdown("""
     div[data-testid="stFileUploader"] {
         padding-top: 10px;
     }
+    
+    /* 让历史相册里的文件名显示更紧凑 */
+    div[data-testid="stCaptionContainer"] {
+        font-size: 12px;
+        color: #666;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-align: center;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -58,7 +69,7 @@ if not st.session_state.authenticated:
     st.stop() 
 
 # ==========================================
-# 3. 本地数据库逻辑 (解决提示词丢失问题)
+# 3. 本地数据库逻辑
 # ==========================================
 def load_local_db():
     if not os.path.exists(DB_FILE): return {}
@@ -76,7 +87,7 @@ def save_to_local_db(task_id, prompt):
 def match_prompt_by_id(item):
     """尝试从本地数据库找回提示词"""
     local_db = load_local_db()
-    if item.id in local_db: return f"📝 {local_db[item.id]}" # 📝 代表本地找回
+    if item.id in local_db: return f"📝 {local_db[item.id]}"
     return "☁️ 云端记录 (无提示词)"
 
 # ==========================================
@@ -84,6 +95,7 @@ def match_prompt_by_id(item):
 # ==========================================
 def upload_to_temp_host(uploaded_file):
     try:
+        uploaded_file.seek(0)
         url = 'https://tmpfiles.org/api/v1/upload'
         files = {'file': (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
         response = requests.post(url, files=files)
@@ -95,7 +107,7 @@ def upload_to_temp_host(uploaded_file):
     except: return None
 
 # ==========================================
-# 🔥 核心组件：对齐修复版的图片卡片
+# 🔥 核心组件：Base64 修复版图片卡片 (含文件名显示)
 # ==========================================
 def image_card_component(label, key_prefix, icon="🖼️"):
     """
@@ -107,39 +119,69 @@ def image_card_component(label, key_prefix, icon="🖼️"):
     if gallery_key not in st.session_state: st.session_state[gallery_key] = []
     if selected_key not in st.session_state: st.session_state[selected_key] = None
 
-    # 外层容器 (带边框)
+    # 外层容器
     with st.container(border=True):
         st.markdown(f"### {icon} {label}")
         
-        # --- A. 预览区 (强制固定高度 250px，保证左右绝对对齐) ---
         current_file = st.session_state[selected_key]
         
-        # 使用 CSS Flexbox 居中显示图片或占位符
+        # --- A. 预览区 (固定高度 200px) ---
         if current_file:
-            # 有图片时
-            st.markdown(
-                f'<div style="height: 250px; display: flex; align-items: center; justify-content: center; overflow: hidden; background-color: #f0f2f6; border-radius: 8px; margin-bottom: 10px;">', 
-                unsafe_allow_html=True
-            )
-            st.image(current_file, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # 移除按钮
-            if st.button(f"❌ 移除图片", key=f"rm_{key_prefix}", use_container_width=True):
+            try:
+                current_file.seek(0)
+                b64_data = base64.b64encode(current_file.read()).decode()
+                mime_type = current_file.type
+                current_file.seek(0)
+                
+                st.markdown(
+                    f"""
+                    <div style="
+                        height: 200px; 
+                        width: 100%; 
+                        background-color: #f0f2f6; 
+                        border-radius: 8px; 
+                        display: flex; 
+                        justify-content: center; 
+                        align-items: center; 
+                        overflow: hidden;
+                        margin-bottom: 10px;
+                    ">
+                        <img src="data:{mime_type};base64,{b64_data}" 
+                             style="max-height: 100%; max-width: 100%; object-fit: contain;">
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                
+                if st.button(f"❌ 移除图片", key=f"rm_{key_prefix}", use_container_width=True):
+                    st.session_state[selected_key] = None
+                    st.rerun()
+            except:
+                st.error("预览失败")
                 st.session_state[selected_key] = None
-                st.rerun()
         else:
-            # 无图片时 (显示虚线占位符)
+            # 占位符
             st.markdown(
                 f"""
-                <div style="height: 250px; display: flex; flex-direction: column; align-items: center; justify-content: center; background-color: #fafafa; border-radius: 8px; color: #ccc; border: 2px dashed #ddd; margin-bottom: 10px;">
-                    <div style="font-size: 40px;">📷</div>
-                    <div style="margin-top: 10px; font-size: 14px;">暂无图片</div>
+                <div style="
+                    height: 200px; 
+                    width: 100%; 
+                    background-color: #fafafa; 
+                    border-radius: 8px; 
+                    border: 2px dashed #ddd; 
+                    display: flex; 
+                    flex-direction: column; 
+                    justify-content: center; 
+                    align-items: center; 
+                    color: #ccc;
+                    margin-bottom: 10px;
+                ">
+                    <div style="font-size: 30px;">📷</div>
+                    <div style="font-size: 14px; margin-top: 5px;">暂无图片</div>
                 </div>
                 """, 
                 unsafe_allow_html=True
             )
-            # 占位按钮 (禁用状态，保持高度占位)
             st.button("❌ 移除图片", key=f"rm_dis_{key_prefix}", disabled=True, use_container_width=True)
 
         st.divider()
@@ -150,10 +192,9 @@ def image_card_component(label, key_prefix, icon="🖼️"):
             type=["jpg", "png"], 
             accept_multiple_files=True, 
             key=f"u_{key_prefix}",
-            label_visibility="collapsed" # 隐藏标题让界面更紧凑
+            label_visibility="collapsed"
         )
         
-        # ⚡️ 自动处理上传并刷新
         if uploaded_files:
             new_upload = False
             for f in uploaded_files:
@@ -161,20 +202,21 @@ def image_card_component(label, key_prefix, icon="🖼️"):
                     names = [x.name for x in st.session_state[gallery_key]]
                     if f.name not in names:
                         st.session_state[gallery_key].append(f)
-                        st.session_state[selected_key] = f # 自动选中新图
+                        st.session_state[selected_key] = f
                         new_upload = True
-            
-            # 如果有新图，立即刷新，解决“预览慢半拍”的问题
             if new_upload:
                 st.rerun()
 
-        # 📚 历史相册折叠区
+        # 📚 历史相册 (带文件名显示)
         if st.session_state[gallery_key]:
             with st.expander(f"📚 历史相册 ({len(st.session_state[gallery_key])})"):
                 cols = st.columns(4)
                 for i, img in enumerate(st.session_state[gallery_key]):
                     with cols[i % 4]:
                         st.image(img, use_container_width=True)
+                        # 🔥 核心修改：在图片下方显示文件名
+                        # help参数会在鼠标悬停时显示完整文件名，防止过长截断看不清
+                        st.caption(img.name, help=img.name) 
                 
                 options = [f.name for f in st.session_state[gallery_key]]
                 current_idx = 0
@@ -196,7 +238,6 @@ def image_card_component(label, key_prefix, icon="🖼️"):
                     st.session_state[selected_key] = None
                     st.rerun()
 
-    # 返回选中的文件
     if st.session_state[selected_key]:
         return st.session_state[selected_key], "file"
     return None, None
@@ -208,7 +249,6 @@ def image_card_component(label, key_prefix, icon="🖼️"):
 with st.sidebar:
     st.header("⚙️ 全局配置")
     
-    # 优先读取 Secrets，没有则留空
     default_key = st.secrets.get("ARK_API_KEY", os.environ.get("ARK_API_KEY", ""))
     api_key = st.text_input("API Key", value=default_key, type="password")
     
@@ -234,7 +274,6 @@ with st.sidebar:
                     if hasattr(resp, 'items'):
                         for item in resp.items:
                             if not any(h.get('task_id') == item.id for h in st.session_state.history):
-                                # 调用本地数据库匹配
                                 matched_prompt = match_prompt_by_id(item)
                                 ts = getattr(item, 'created_at', 0)
                                 
@@ -247,7 +286,6 @@ with st.sidebar:
                                     "model": model_id
                                 })
                                 count += 1
-                        # 按时间倒序
                         st.session_state.history.sort(key=lambda x: x['created_at'], reverse=True)
                         st.success(f"同步完成，新增 {count} 条记录")
                     else: st.warning("未找到记录")
@@ -258,7 +296,6 @@ with st.sidebar:
 # ==========================================
 st.title("🎬 豆包视频生成 Pro")
 
-# --- 第一部分：提示词 ---
 st.markdown("##### 1️⃣ 输入视频描述")
 prompt_text = st.text_area(
     "提示词", 
@@ -267,9 +304,8 @@ prompt_text = st.text_area(
     label_visibility="collapsed",
     placeholder="在此输入提示词..."
 )
-st.write("") # 间距
+st.write("") 
 
-# --- 第二部分：图片上传 (左右双卡片布局) ---
 st.markdown("##### 2️⃣ 上传参考图")
 col_left, col_right = st.columns([1, 1], gap="medium")
 
@@ -281,10 +317,9 @@ with col_right:
 
 st.divider()
 
-# --- 第三部分：生成按钮 ---
+# --- 生成按钮 ---
 _, btn_col, _ = st.columns([1, 2, 1])
 with btn_col:
-    # 加大按钮
     run_btn = st.button("🚀 立即生成视频", use_container_width=True, type="primary")
 
 # ==========================================
@@ -296,13 +331,16 @@ if run_btn:
     
     status = st.status("🚀 任务初始化...", expanded=True)
     try:
-        # 1. 上传图片
+        first_data.seek(0)
         f_url = upload_to_temp_host(first_data)
-        l_url = upload_to_temp_host(last_data) if last_data else None
+        
+        l_url = None
+        if last_data:
+            last_data.seek(0)
+            l_url = upload_to_temp_host(last_data)
         
         if not f_url: status.update(label="图片上传失败", state="error"); st.stop()
 
-        # 2. 调用 API
         client = Ark(base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=api_key)
         payload = [{"type": "text", "text": prompt_text}, {"type": "image_url", "image_url": {"url": f_url}, "role": "first_frame"}]
         if l_url: payload.append({"type": "image_url", "image_url": {"url": l_url}, "role": "last_frame"})
@@ -314,10 +352,8 @@ if run_btn:
         )
         task_id = res.id
         
-        # 🔥 关键：提交成功立刻记录到本地数据库
         save_to_local_db(task_id, prompt_text)
         
-        # 3. 轮询状态
         start = time.time()
         status.write(f"🆔 任务ID: {task_id}")
         
@@ -332,7 +368,6 @@ if run_btn:
                 v_url = get_res.content.video_url
                 status.update(label=f"✅ 成功 ({elapsed}s)", state="complete", expanded=False)
                 
-                # 插入新记录到界面列表
                 new_rec = {
                     "task_id": task_id, "created_at": time.time(),
                     "time": datetime.now().strftime("%m-%d %H:%M"),
@@ -364,12 +399,10 @@ if "history" in st.session_state and st.session_state.history:
             with st.container(border=True):
                 st.video(item['video_url'])
                 
-                # 标题处理
                 p_text = item['prompt']
                 clean_text = p_text.replace("📝 ", "").replace("☁️ ", "")
                 short_p = clean_text[:18] + "..." if len(clean_text) > 18 else clean_text
                 
-                # 如果是本地找回的，加粗显示
                 if "📝" in p_text: st.markdown(f"**{short_p}**")
                 else: st.caption(short_p)
                 
