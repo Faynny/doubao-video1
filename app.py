@@ -34,7 +34,7 @@ st.markdown("""
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        text-align: left; /* 文字左对齐更像列表 */
+        text-align: left; 
     }
 </style>
 """, unsafe_allow_html=True)
@@ -89,17 +89,20 @@ def upload_to_temp_host(uploaded_file):
     except: return None
 
 # ==========================================
-# 🔥 核心组件：自动重命名 + 错误自愈
+# 🔥 核心组件：修复重复上传 BUG 版
 # ==========================================
 def image_card_component(label, key_prefix, icon="🖼️"):
     """
-    渲染一个高度对齐、支持重名处理、移除不报错的图片组件
+    渲染一个高度对齐、自动清空上传框、防止重复的图片组件
     """
     gallery_key = f"gallery_{key_prefix}"
     selected_key = f"selected_{key_prefix}"
+    # 新增：用于强制重置 file_uploader 的 key
+    uploader_key_name = f"uploader_reset_key_{key_prefix}"
     
     if gallery_key not in st.session_state: st.session_state[gallery_key] = []
     if selected_key not in st.session_state: st.session_state[selected_key] = None
+    if uploader_key_name not in st.session_state: st.session_state[uploader_key_name] = 0
 
     # 外层容器
     with st.container(border=True):
@@ -107,10 +110,9 @@ def image_card_component(label, key_prefix, icon="🖼️"):
         
         current_file = st.session_state[selected_key]
         
-        # --- A. 预览区 (固定高度 200px) ---
+        # --- A. 预览区 ---
         if current_file:
             try:
-                # 尝试读取并渲染
                 current_file.seek(0)
                 b64_data = base64.b64encode(current_file.read()).decode()
                 mime_type = current_file.type
@@ -124,17 +126,14 @@ def image_card_component(label, key_prefix, icon="🖼️"):
                     """, unsafe_allow_html=True
                 )
                 
-                # 移除按钮
                 if st.button(f"❌ 移除图片", key=f"rm_{key_prefix}", use_container_width=True):
                     st.session_state[selected_key] = None
                     st.rerun()
-                    
             except Exception:
-                # 🔥 自愈机制：如果预览出错（比如文件流断了），自动清空并重置，不再显示红字报错
+                # 出错时自动重置，避免报错
                 st.session_state[selected_key] = None
                 st.rerun()
         else:
-            # 占位符
             st.markdown(
                 f"""
                 <div style="height: 200px; width: 100%; background-color: #fafafa; border-radius: 8px; border: 2px dashed #ddd; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #ccc; margin-bottom: 10px;">
@@ -146,34 +145,37 @@ def image_card_component(label, key_prefix, icon="🖼️"):
 
         st.divider()
 
-        # --- B. 上传区 ---
-        uploaded_files = st.file_uploader("上传新图", type=["jpg", "png", "jpeg"], accept_multiple_files=True, key=f"u_{key_prefix}", label_visibility="collapsed")
+        # --- B. 上传区 (关键修复) ---
+        # 使用动态 key，每次处理完文件后 key+1，强行清空上传框
+        dynamic_key = f"u_{key_prefix}_{st.session_state[uploader_key_name]}"
+        
+        uploaded_files = st.file_uploader(
+            "上传新图", 
+            type=["jpg", "png", "jpeg"], 
+            accept_multiple_files=True, 
+            key=dynamic_key, 
+            label_visibility="collapsed"
+        )
         
         if uploaded_files:
-            new_upload = False
             for f in uploaded_files:
-                if len(st.session_state[gallery_key]) < 20: # 限制20张
-                    
-                    # 🔥 核心修复：防止同名覆盖
-                    # 自动给文件名加上时间戳前缀 [时:分:秒]
-                    # 这样即使是 image.png 也会变成 [10:20:05] image.png，保证唯一性
+                if len(st.session_state[gallery_key]) < 20:
+                    # 加时间戳防止重名
                     time_prefix = datetime.now().strftime("[%H:%M:%S]")
-                    # 修改文件对象的 name 属性
                     f.name = f"{time_prefix} {f.name}"
                     
-                    # 检查是否真的还重复 (理论上加上秒数很难重复了)
                     names = [x.name for x in st.session_state[gallery_key]]
                     if f.name not in names:
                         st.session_state[gallery_key].append(f)
                         st.session_state[selected_key] = f
-                        new_upload = True
             
-            if new_upload: st.rerun()
+            # 🔥 核心修复：处理完文件后，让 key + 1，清空上传框
+            st.session_state[uploader_key_name] += 1
+            st.rerun()
 
-        # --- C. 历史相册 (按钮选择模式) ---
+        # --- C. 历史相册 ---
         if st.session_state[gallery_key]:
             with st.expander(f"📚 历史相册 ({len(st.session_state[gallery_key])})", expanded=True):
-                
                 cols = st.columns(4)
                 for i, img in enumerate(st.session_state[gallery_key]):
                     with cols[i % 4]:
@@ -183,7 +185,6 @@ def image_card_component(label, key_prefix, icon="🖼️"):
                         btn_label = f"✅ {img.name}" if is_selected else img.name
                         btn_type = "primary" if is_selected else "secondary"
                         
-                        # 按钮点击
                         if st.button(btn_label, key=f"sel_{key_prefix}_{i}", use_container_width=True, type=btn_type, help="点击选择"):
                             st.session_state[selected_key] = img
                             st.rerun()
