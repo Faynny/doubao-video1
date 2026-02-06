@@ -7,7 +7,7 @@ from datetime import datetime
 from volcenginesdkarkruntime import Ark
 
 # ==========================================
-# 1. 页面基础配置
+# 1. 基础配置
 # ==========================================
 st.set_page_config(
     page_title="豆包视频生成 Pro",
@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 APP_PASSWORD = "HYMS"  # <--- 你的密码
-DB_FILE = "local_prompts.json" # 我们的“小账本”文件
+DB_FILE = "local_prompts.json" # 💾 本地数据库文件名
 
 # --- 登录逻辑 ---
 if "authenticated" not in st.session_state:
@@ -36,10 +36,10 @@ if not st.session_state.authenticated:
     st.stop() 
 
 # ==========================================
-# 2. 本地数据库管理 (核心新增功能)
+# 2. 数据库读写函数 (核心逻辑)
 # ==========================================
 def load_local_db():
-    """读取本地小账本"""
+    """读取本地存储的提示词记录"""
     if not os.path.exists(DB_FILE):
         return {}
     try:
@@ -49,7 +49,7 @@ def load_local_db():
         return {}
 
 def save_to_local_db(task_id, prompt):
-    """把 ID 和提示词记在账本上"""
+    """保存新的提示词记录"""
     db = load_local_db()
     db[task_id] = prompt
     try:
@@ -90,19 +90,21 @@ def upload_to_temp_host(uploaded_file):
         return None
     except: return None
 
-# --- 智能提取函数 (结合本地账本) ---
-def get_prompt_intelligent(item):
+# --- 🧠 智能匹配函数 ---
+def match_prompt_by_id(item):
     """
-    先查本地账本，如果没有，再尝试从 API 提取，最后兜底。
+    输入：云端 API 返回的 item
+    输出：匹配到的提示词
     """
     task_id = item.id
     
-    # 1. 优先查本地数据库 (最准确)
+    # 1. 🔍 核心步骤：去本地数据库里查！
     local_db = load_local_db()
     if task_id in local_db:
-        return "📝 " + local_db[task_id] # 加个图标表示是本地找回的
+        # 如果找到了，返回记录的提示词，并加个图标标记
+        return f"📝 {local_db[task_id]}"
     
-    # 2. 尝试从 API 结构里找 (虽然通常没有)
+    # 2. 如果本地没记录，尝试从 API 结构里找 (虽然通常是空的)
     try:
         if hasattr(item, 'content') and isinstance(item.content, list):
             for c in item.content:
@@ -112,11 +114,11 @@ def get_prompt_intelligent(item):
                     return c.get('text', '')
     except: pass
     
-    # 3. 如果都没有，返回基本信息兜底
+    # 3. 实在找不到的兜底文案
     meta = []
     if hasattr(item, 'resolution'): meta.append(str(item.resolution))
     if hasattr(item, 'duration'): meta.append(f"{item.duration}s")
-    return f"☁️ 云端任务 ({' | '.join(meta)}) - 无提示词记录"
+    return f"☁️ 云端任务 ({' | '.join(meta)}) - 本地无记录"
 
 def handle_image_input(label, key_prefix):
     st.markdown(f"**{label}**")
@@ -171,35 +173,37 @@ with st.sidebar:
     duration = st.slider("时长", 2, 10, 5)
     
     st.divider()
-    if st.button("🔄 同步最近 50 条"):
+    if st.button("🔄 同步最近 50 条 (自动匹配)"):
         if not api_key:
             st.error("缺 API Key")
         else:
             try:
                 client = Ark(base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=api_key)
-                with st.spinner("正在拉取数据并匹配本地账本..."):
+                with st.spinner("正在拉取云端数据并匹配本地数据库..."):
                     resp = client.content_generation.tasks.list(page_size=50, status="succeeded")
                     count = 0
                     if hasattr(resp, 'items'):
                         for item in resp.items:
+                            # 仅同步新记录
                             if not any(h.get('task_id') == item.id for h in st.session_state.history):
                                 
-                                # === 调用智能提取 (查本地库) ===
-                                prompt_str = get_prompt_intelligent(item)
-                                # ===========================
+                                # === 🔥 关键点：调用匹配逻辑 ===
+                                # 这里会自动去 local_prompts.json 里找对应的提示词
+                                matched_prompt = match_prompt_by_id(item)
+                                # ============================
                                 
                                 created_ts = getattr(item, 'created_at', 0)
                                 st.session_state.history.append({
                                     "task_id": item.id,
                                     "created_at": created_ts,
                                     "time": datetime.fromtimestamp(created_ts).strftime("%m-%d %H:%M"),
-                                    "prompt": prompt_str,
+                                    "prompt": matched_prompt, # 使用匹配到的提示词
                                     "video_url": item.content.video_url,
                                     "model": model_id
                                 })
                                 count += 1
                         st.session_state.history.sort(key=lambda x: x['created_at'], reverse=True)
-                        st.success(f"同步成功！匹配本地记录 {count} 条")
+                        st.success(f"同步成功！新增 {count} 条记录")
                     else: st.warning("无数据")
             except Exception as e: st.error(str(e))
 
@@ -240,9 +244,9 @@ if st.button("🚀 生成视频"):
         )
         task_id = res.id
         
-        # === 核心：提交成功后，立即保存到本地账本 ===
+        # === 🔥 关键点：生成时立刻保存到本地数据库 ===
         save_to_local_db(task_id, prompt_text)
-        # ========================================
+        # =========================================
         
         start = time.time()
         status.write(f"🆔 任务ID: {task_id}")
@@ -262,7 +266,7 @@ if st.button("🚀 生成视频"):
                     "task_id": task_id,
                     "created_at": time.time(),
                     "time": datetime.now().strftime("%m-%d %H:%M"),
-                    "prompt": prompt_text, # 这里直接用当前的 prompt
+                    "prompt": prompt_text,
                     "video_url": v_url,
                     "model": model_id
                 }
@@ -292,11 +296,20 @@ if st.session_state.history:
                 st.caption(f"🕒 {item['time']}")
                 
                 p_text = item['prompt']
-                short_p = p_text[:20] + "..." if len(p_text) > 20 else p_text
-                st.markdown(f"**Prompt:** {short_p}")
+                # 去掉开头的 emoji 符号计算长度
+                clean_text = p_text.replace("📝 ", "").replace("☁️ ", "")
+                short_p = clean_text[:20] + "..." if len(clean_text) > 20 else clean_text
+                
+                # 标题部分：如果是本地匹配成功的，加粗显示
+                if "📝" in p_text:
+                    st.markdown(f"**Prompt:** {short_p}")
+                else:
+                    st.caption(f"Prompt: {short_p}")
                 
                 with st.expander("详情"):
-                    # 这里的 prompt 会优先显示我们刚才存进去的
-                    st.text_area("完整提示词", item['prompt'], height=80, disabled=True, key=f"t_{index}")
+                    st.text_area("完整提示词", clean_text, height=80, disabled=True, key=f"t_{index}")
                     st.text(f"ID: {item.get('task_id')}")
                     st.markdown(f"**[📥 下载视频]({item['video_url']})**")
+                    
+                    if "📝" in p_text:
+                         st.success("✅ 该提示词已从本地数据库恢复")
